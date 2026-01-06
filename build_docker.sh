@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/bash 
 
-# Сборка APK через Docker (не требует установки Android SDK)
+# Сборка APK через Docker (не требует установки Android SDK) - нет
 
 set -e
 
