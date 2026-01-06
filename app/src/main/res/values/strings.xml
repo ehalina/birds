@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Motion Recorder</string>
+    <string name="status_idle">Ожидание движения</string>
+    <string name="status_recording">Запись...</string>
+    <string name="status_stopped">Остановлено</string>
+</resources>
+
+
