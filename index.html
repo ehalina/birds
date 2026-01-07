@@ -22,16 +22,12 @@
             position: relative;
             width: 100vw;
             height: 100vh;
-            overflow: hidden;
         }
         
         #video {
             width: 100%;
             height: 100%;
             object-fit: cover;
-            position: absolute;
-            top: 0;
-            left: 0;
         }
         
         #canvas {
@@ -47,22 +43,6 @@
             border-radius: 8px;
             font-size: 16px;
             z-index: 10;
-            max-width: calc(100vw - 40px);
-            word-wrap: break-word;
-        }
-        
-        #info {
-            position: absolute;
-            bottom: 80px;
-            left: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-size: 12px;
-            z-index: 10;
-            text-align: center;
-            display: none;
         }
         
         #status.recording {
@@ -81,8 +61,6 @@
             left: 50%;
             transform: translateX(-50%);
             z-index: 10;
-            display: block;
-            visibility: visible;
         }
         
         button {
@@ -95,8 +73,6 @@
             cursor: pointer;
             margin: 0 10px;
             backdrop-filter: blur(10px);
-            display: block;
-            visibility: visible;
         }
         
         button:hover {
@@ -126,8 +102,7 @@
     <div id="container">
         <video id="video" autoplay playsinline></video>
         <canvas id="canvas"></canvas>
-        <div id="status">Загрузка...</div>
-        <div id="info">Видео сохраняется в папку Downloads</div>
+        <div id="status">Инициализация...</div>
         <div id="error"></div>
         <div id="controls">
             <button id="startBtn">Начать</button>
@@ -137,45 +112,29 @@
     <script>
         class MotionRecorder {
             constructor() {
-                try {
-                    this.video = document.getElementById('video');
-                    this.canvas = document.getElementById('canvas');
-                    this.ctx = this.canvas.getContext('2d');
-                    this.status = document.getElementById('status');
-                    this.startBtn = document.getElementById('startBtn');
-                    this.errorDiv = document.getElementById('error');
-                    this.infoDiv = document.getElementById('info');
-                    
-                    if (!this.video || !this.canvas || !this.status || !this.startBtn) {
-                        throw new Error('Не найдены необходимые элементы на странице');
-                    }
-                    
-                    this.stream = null;
-                    this.mediaRecorder = null;
-                    this.recordedChunks = [];
-                    this.isRecording = false;
-                    this.motionDetected = false;
-                    this.lastMotionTime = 0;
-                    this.motionTimeout = null;
-                    
-                    this.previousFrame = null;
-                    this.frameCount = 0;
-                    this.threshold = 0.1;
-                    this.motionTimeoutDuration = 30000; // 30 секунд
-                    
-                    this.animationFrameId = null;
-                    
-                    this.updateStatus('Готов к работе');
-                    this.startBtn.addEventListener('click', () => this.start());
-                } catch (error) {
-                    console.error('Ошибка инициализации:', error);
-                    if (this.status) {
-                        this.status.textContent = 'Ошибка: ' + error.message;
-                    }
-                    if (this.errorDiv) {
-                        this.showError('Ошибка загрузки: ' + error.message);
-                    }
-                }
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.status = document.getElementById('status');
+                this.startBtn = document.getElementById('startBtn');
+                this.errorDiv = document.getElementById('error');
+                
+                this.stream = null;
+                this.mediaRecorder = null;
+                this.recordedChunks = [];
+                this.isRecording = false;
+                this.motionDetected = false;
+                this.lastMotionTime = 0;
+                this.motionTimeout = null;
+                
+                this.previousFrame = null;
+                this.frameCount = 0;
+                this.threshold = 0.1;
+                this.motionTimeoutDuration = 30000; // 30 секунд
+                
+                this.animationFrameId = null;
+                
+                this.startBtn.addEventListener('click', () => this.start());
             }
             
             async start() {
@@ -198,7 +157,6 @@
                     this.startBtn.textContent = 'Остановить';
                     this.startBtn.disabled = false;
                     this.startBtn.onclick = () => this.stop();
-                    this.infoDiv.style.display = 'block';
                     
                     this.startMotionDetection();
                 } catch (error) {
@@ -319,58 +277,23 @@
                 }
             }
             
-            async saveRecording() {
+            saveRecording() {
                 const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-                const filename = `motion-recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
-                
-                // Пробуем Web Share API (лучше работает на Android)
-                if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'video/webm' })] })) {
-                    try {
-                        const file = new File([blob], filename, { type: 'video/webm' });
-                        await navigator.share({
-                            files: [file],
-                            title: 'Motion Recording',
-                            text: 'Видео с обнаружением движения'
-                        });
-                        this.updateStatus('✅ Видео сохранено! Проверьте галерею или Downloads');
-                        setTimeout(() => {
-                            if (!this.isRecording) {
-                                this.updateStatus('Камера активна');
-                            }
-                        }, 4000);
-                        return;
-                    } catch (error) {
-                        if (error.name !== 'AbortError') {
-                            console.log('Share failed, trying download:', error);
-                        } else {
-                            return; // Пользователь отменил
-                        }
-                    }
-                }
-                
-                // Fallback: обычное скачивание
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = filename;
-                a.style.display = 'none';
+                a.download = `motion-recording-${Date.now()}.webm`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
+                URL.revokeObjectURL(url);
                 
-                // Даем время на скачивание перед освобождением URL
-                setTimeout(() => {
-                    URL.revokeObjectURL(url);
-                }, 100);
-                
-                this.updateStatus('✅ Видео скачано! Проверьте папку Downloads');
-                this.infoDiv.textContent = `Файл: ${filename} - в папке Downloads`;
+                this.updateStatus('Видео сохранено');
                 setTimeout(() => {
                     if (!this.isRecording) {
                         this.updateStatus('Камера активна');
-                        this.infoDiv.textContent = 'Видео сохраняется в папку Downloads';
                     }
-                }, 4000);
+                }, 2000);
             }
             
             stop() {
@@ -393,7 +316,6 @@
                 this.updateStatus('Остановлено');
                 this.startBtn.textContent = 'Начать';
                 this.startBtn.onclick = () => this.start();
-                this.infoDiv.style.display = 'none';
             }
             
             updateStatus(text) {
@@ -410,26 +332,8 @@
         }
         
         // Инициализация при загрузке
-        let recorder;
         window.addEventListener('load', () => {
-            try {
-                recorder = new MotionRecorder();
-            } catch (error) {
-                console.error('Критическая ошибка:', error);
-                const status = document.getElementById('status');
-                if (status) {
-                    status.textContent = 'Ошибка загрузки приложения';
-                    status.style.background = 'rgba(255, 0, 0, 0.8)';
-                }
-            }
-        });
-        
-        // Дополнительная проверка через DOMContentLoaded
-        document.addEventListener('DOMContentLoaded', () => {
-            const startBtn = document.getElementById('startBtn');
-            if (startBtn && startBtn.style.display === 'none') {
-                startBtn.style.display = 'block';
-            }
+            new MotionRecorder();
         });
     </script>
 </body>
