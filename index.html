@@ -292,13 +292,25 @@
                 mediaRecorder = new MediaRecorder(stream, options);
                 
                 mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
+                    if (event.data && event.data.size > 0) {
                         recordedChunks.push(event.data);
+                        console.log('Получен фрагмент:', event.data.size, 'байт. Всего фрагментов:', recordedChunks.length);
                     }
                 };
                 
                 mediaRecorder.onstop = () => {
-                    saveVideo();
+                    console.log('Запись остановлена. Всего фрагментов:', recordedChunks.length);
+                    if (recordedChunks.length > 0) {
+                        saveVideo();
+                    } else {
+                        status.textContent = 'Ошибка: нет записанных данных';
+                        info.textContent = 'Попробуйте записать снова';
+                    }
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    console.error('Ошибка MediaRecorder:', event.error);
+                    status.textContent = 'Ошибка записи: ' + event.error.message;
                 };
                 
                 mediaRecorder.start(1000); // собираем данные каждую секунду
@@ -325,39 +337,116 @@
                 motionTimeout = null;
             }
             
-            if (mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
-            
             isRecording = false;
             startBtn.style.display = 'block';
             stopBtn.style.display = 'none';
-            status.textContent = 'Сохранение видео...';
+            status.textContent = 'Остановка записи...';
             status.classList.remove('recording');
             info.textContent = '';
             
             stopMotionDetection();
+            
+            // Останавливаем запись и собираем все данные
+            if (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused') {
+                // Запрашиваем финальные данные перед остановкой
+                try {
+                    mediaRecorder.requestData();
+                } catch (e) {
+                    console.log('Не удалось запросить данные:', e);
+                }
+                
+                setTimeout(() => {
+                    if (mediaRecorder.state !== 'inactive') {
+                        mediaRecorder.stop();
+                    }
+                }, 100);
+            }
         }
         
-        function saveVideo() {
+        async function saveVideo() {
             if (recordedChunks.length === 0) {
                 status.textContent = 'Ошибка: нет данных для сохранения';
                 return;
             }
             
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            a.href = url;
-            a.download = `motion-recording-${timestamp}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const filename = `motion-recording-${timestamp}.webm`;
             
-            status.textContent = 'Видео сохранено в галерею';
-            info.textContent = 'Файл скачан. На мобильных устройствах проверьте папку "Загрузки"';
+            try {
+                // Пробуем использовать File System Access API (Chrome, Edge)
+                if ('showSaveFilePicker' in window) {
+                    const fileHandle = await window.showSaveFilePicker({
+                        suggestedName: filename,
+                        types: [{
+                            description: 'Video files',
+                            accept: { 'video/webm': ['.webm'] }
+                        }]
+                    });
+                    
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    
+                    status.textContent = 'Видео сохранено в галерею';
+                    info.textContent = 'Файл успешно сохранен';
+                } else {
+                    // Fallback для мобильных устройств и других браузеров
+                    const url = URL.createObjectURL(blob);
+                    
+                    // Создаем видимую ссылку для скачивания
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = url;
+                    downloadLink.download = filename;
+                    downloadLink.style.display = 'block';
+                    downloadLink.style.padding = '15px';
+                    downloadLink.style.marginTop = '10px';
+                    downloadLink.style.background = '#4CAF50';
+                    downloadLink.style.color = 'white';
+                    downloadLink.style.textAlign = 'center';
+                    downloadLink.style.borderRadius = '8px';
+                    downloadLink.style.textDecoration = 'none';
+                    downloadLink.textContent = 'Нажмите для сохранения видео';
+                    
+                    // Добавляем в DOM
+                    const controls = document.querySelector('.controls');
+                    const existingLink = controls.querySelector('.download-link');
+                    if (existingLink) {
+                        existingLink.remove();
+                    }
+                    downloadLink.classList.add('download-link');
+                    controls.appendChild(downloadLink);
+                    
+                    // Пробуем автоматически скачать
+                    downloadLink.click();
+                    
+                    // Удаляем ссылку через 10 секунд
+                    setTimeout(() => {
+                        if (downloadLink.parentNode) {
+                            downloadLink.remove();
+                        }
+                        URL.revokeObjectURL(url);
+                    }, 10000);
+                    
+                    status.textContent = 'Видео готово к сохранению';
+                    info.textContent = 'Нажмите на зеленую кнопку выше для сохранения';
+                }
+            } catch (error) {
+                console.error('Ошибка сохранения:', error);
+                
+                // Последний fallback - открыть в новом окне
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                status.textContent = 'Видео готово';
+                info.textContent = 'Если файл не скачался, откройте ссылку вручную';
+            }
             
             // Очищаем данные
             recordedChunks = [];
