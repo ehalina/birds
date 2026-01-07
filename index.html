@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Recorder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        #canvas {
+            display: none;
+        }
+        
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            z-index: 10;
+        }
+        
+        #status.recording {
+            background: rgba(255, 0, 0, 0.8);
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+        
+        button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 0 10px;
+            backdrop-filter: blur(10px);
+        }
+        
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        #error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 20;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div id="status">Инициализация...</div>
+        <div id="error"></div>
+        <div id="controls">
+            <button id="startBtn">Начать</button>
+        </div>
+    </div>
+
+    <script>
+        class MotionRecorder {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.status = document.getElementById('status');
+                this.startBtn = document.getElementById('startBtn');
+                this.errorDiv = document.getElementById('error');
+                
+                this.stream = null;
+                this.mediaRecorder = null;
+                this.recordedChunks = [];
+                this.isRecording = false;
+                this.motionDetected = false;
+                this.lastMotionTime = 0;
+                this.motionTimeout = null;
+                
+                this.previousFrame = null;
+                this.frameCount = 0;
+                this.threshold = 0.1;
+                this.motionTimeoutDuration = 30000; // 30 секунд
+                
+                this.animationFrameId = null;
+                
+                this.startBtn.addEventListener('click', () => this.start());
+            }
+            
+            async start() {
+                try {
+                    this.startBtn.disabled = true;
+                    this.updateStatus('Запрос доступа к камере...');
+                    
+                    this.stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment' },
+                        audio: true
+                    });
+                    
+                    this.video.srcObject = this.stream;
+                    await this.video.play();
+                    
+                    this.canvas.width = this.video.videoWidth;
+                    this.canvas.height = this.video.videoHeight;
+                    
+                    this.updateStatus('Камера активна');
+                    this.startBtn.textContent = 'Остановить';
+                    this.startBtn.disabled = false;
+                    this.startBtn.onclick = () => this.stop();
+                    
+                    this.startMotionDetection();
+                } catch (error) {
+                    this.showError('Ошибка доступа к камере: ' + error.message);
+                    this.startBtn.disabled = false;
+                }
+            }
+            
+            startMotionDetection() {
+                const detect = () => {
+                    if (!this.video.videoWidth) {
+                        this.animationFrameId = requestAnimationFrame(detect);
+                        return;
+                    }
+                    
+                    this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+                    const currentFrame = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    if (this.previousFrame) {
+                        this.frameCount++;
+                        
+                        if (this.frameCount >= 5) {
+                            const diff = this.calculateDifference(this.previousFrame, currentFrame);
+                            
+                            if (diff > this.threshold) {
+                                if (!this.motionDetected) {
+                                    this.motionDetected = true;
+                                    this.startRecording();
+                                }
+                                this.lastMotionTime = Date.now();
+                                this.clearMotionTimeout();
+                            }
+                            
+                            if (this.motionDetected && Date.now() - this.lastMotionTime > this.motionTimeoutDuration) {
+                                this.motionDetected = false;
+                                this.stopRecording();
+                            }
+                        }
+                    }
+                    
+                    this.previousFrame = currentFrame;
+                    this.animationFrameId = requestAnimationFrame(detect);
+                };
+                
+                detect();
+            }
+            
+            calculateDifference(frame1, frame2) {
+                let totalDiff = 0;
+                const data1 = frame1.data;
+                const data2 = frame2.data;
+                
+                for (let i = 0; i < data1.length; i += 4) {
+                    const r1 = data1[i];
+                    const g1 = data1[i + 1];
+                    const b1 = data1[i + 2];
+                    
+                    const r2 = data2[i];
+                    const g2 = data2[i + 1];
+                    const b2 = data2[i + 2];
+                    
+                    totalDiff += Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
+                }
+                
+                const pixelCount = frame1.width * frame1.height;
+                return totalDiff / (pixelCount * 765.0);
+            }
+            
+            startRecording() {
+                if (this.isRecording) return;
+                
+                this.recordedChunks = [];
+                const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+                
+                try {
+                    this.mediaRecorder = new MediaRecorder(this.stream, options);
+                } catch (e) {
+                    try {
+                        this.mediaRecorder = new MediaRecorder(this.stream);
+                    } catch (e2) {
+                        this.showError('MediaRecorder не поддерживается');
+                        return;
+                    }
+                }
+                
+                this.mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        this.recordedChunks.push(event.data);
+                    }
+                };
+                
+                this.mediaRecorder.onstop = () => {
+                    this.saveRecording();
+                };
+                
+                this.mediaRecorder.start();
+                this.isRecording = true;
+                this.status.textContent = '🔴 Запись...';
+                this.status.classList.add('recording');
+            }
+            
+            stopRecording() {
+                if (!this.isRecording) return;
+                
+                if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+                    this.mediaRecorder.stop();
+                }
+                
+                this.isRecording = false;
+                this.status.textContent = 'Камера активна';
+                this.status.classList.remove('recording');
+            }
+            
+            clearMotionTimeout() {
+                if (this.motionTimeout) {
+                    clearTimeout(this.motionTimeout);
+                    this.motionTimeout = null;
+                }
+            }
+            
+            saveRecording() {
+                const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `motion-recording-${Date.now()}.webm`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                this.updateStatus('Видео сохранено');
+                setTimeout(() => {
+                    if (!this.isRecording) {
+                        this.updateStatus('Камера активна');
+                    }
+                }, 2000);
+            }
+            
+            stop() {
+                if (this.animationFrameId) {
+                    cancelAnimationFrame(this.animationFrameId);
+                }
+                
+                this.stopRecording();
+                this.clearMotionTimeout();
+                
+                if (this.stream) {
+                    this.stream.getTracks().forEach(track => track.stop());
+                }
+                
+                this.video.srcObject = null;
+                this.previousFrame = null;
+                this.frameCount = 0;
+                this.motionDetected = false;
+                
+                this.updateStatus('Остановлено');
+                this.startBtn.textContent = 'Начать';
+                this.startBtn.onclick = () => this.start();
+            }
+            
+            updateStatus(text) {
+                this.status.textContent = text;
+            }
+            
+            showError(message) {
+                this.errorDiv.textContent = message;
+                this.errorDiv.style.display = 'block';
+                setTimeout(() => {
+                    this.errorDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        // Инициализация при загрузке
+        window.addEventListener('load', () => {
+            new MotionRecorder();
+        });
+    </script>
+</body>
+</html>
+
