@@ -22,12 +22,16 @@
             position: relative;
             width: 100vw;
             height: 100vh;
+            overflow: hidden;
         }
         
         #video {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
         }
         
         #canvas {
@@ -77,6 +81,8 @@
             left: 50%;
             transform: translateX(-50%);
             z-index: 10;
+            display: block;
+            visibility: visible;
         }
         
         button {
@@ -89,6 +95,8 @@
             cursor: pointer;
             margin: 0 10px;
             backdrop-filter: blur(10px);
+            display: block;
+            visibility: visible;
         }
         
         button:hover {
@@ -118,7 +126,7 @@
     <div id="container">
         <video id="video" autoplay playsinline></video>
         <canvas id="canvas"></canvas>
-        <div id="status">Инициализация...</div>
+        <div id="status">Загрузка...</div>
         <div id="info">Видео сохраняется в папку Downloads</div>
         <div id="error"></div>
         <div id="controls">
@@ -129,30 +137,45 @@
     <script>
         class MotionRecorder {
             constructor() {
-                this.video = document.getElementById('video');
-                this.canvas = document.getElementById('canvas');
-                this.ctx = this.canvas.getContext('2d');
-                this.status = document.getElementById('status');
-                this.startBtn = document.getElementById('startBtn');
-                this.errorDiv = document.getElementById('error');
-                this.infoDiv = document.getElementById('info');
-                
-                this.stream = null;
-                this.mediaRecorder = null;
-                this.recordedChunks = [];
-                this.isRecording = false;
-                this.motionDetected = false;
-                this.lastMotionTime = 0;
-                this.motionTimeout = null;
-                
-                this.previousFrame = null;
-                this.frameCount = 0;
-                this.threshold = 0.1;
-                this.motionTimeoutDuration = 30000; // 30 секунд
-                
-                this.animationFrameId = null;
-                
-                this.startBtn.addEventListener('click', () => this.start());
+                try {
+                    this.video = document.getElementById('video');
+                    this.canvas = document.getElementById('canvas');
+                    this.ctx = this.canvas.getContext('2d');
+                    this.status = document.getElementById('status');
+                    this.startBtn = document.getElementById('startBtn');
+                    this.errorDiv = document.getElementById('error');
+                    this.infoDiv = document.getElementById('info');
+                    
+                    if (!this.video || !this.canvas || !this.status || !this.startBtn) {
+                        throw new Error('Не найдены необходимые элементы на странице');
+                    }
+                    
+                    this.stream = null;
+                    this.mediaRecorder = null;
+                    this.recordedChunks = [];
+                    this.isRecording = false;
+                    this.motionDetected = false;
+                    this.lastMotionTime = 0;
+                    this.motionTimeout = null;
+                    
+                    this.previousFrame = null;
+                    this.frameCount = 0;
+                    this.threshold = 0.1;
+                    this.motionTimeoutDuration = 30000; // 30 секунд
+                    
+                    this.animationFrameId = null;
+                    
+                    this.updateStatus('Готов к работе');
+                    this.startBtn.addEventListener('click', () => this.start());
+                } catch (error) {
+                    console.error('Ошибка инициализации:', error);
+                    if (this.status) {
+                        this.status.textContent = 'Ошибка: ' + error.message;
+                    }
+                    if (this.errorDiv) {
+                        this.showError('Ошибка загрузки: ' + error.message);
+                    }
+                }
             }
             
             async start() {
@@ -387,8 +410,26 @@
         }
         
         // Инициализация при загрузке
+        let recorder;
         window.addEventListener('load', () => {
-            new MotionRecorder();
+            try {
+                recorder = new MotionRecorder();
+            } catch (error) {
+                console.error('Критическая ошибка:', error);
+                const status = document.getElementById('status');
+                if (status) {
+                    status.textContent = 'Ошибка загрузки приложения';
+                    status.style.background = 'rgba(255, 0, 0, 0.8)';
+                }
+            }
+        });
+        
+        // Дополнительная проверка через DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const startBtn = document.getElementById('startBtn');
+            if (startBtn && startBtn.style.display === 'none') {
+                startBtn.style.display = 'block';
+            }
         });
     </script>
 </body>
