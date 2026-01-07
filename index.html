@@ -43,6 +43,22 @@
             border-radius: 8px;
             font-size: 16px;
             z-index: 10;
+            max-width: calc(100vw - 40px);
+            word-wrap: break-word;
+        }
+        
+        #info {
+            position: absolute;
+            bottom: 80px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 10;
+            text-align: center;
+            display: none;
         }
         
         #status.recording {
@@ -103,6 +119,7 @@
         <video id="video" autoplay playsinline></video>
         <canvas id="canvas"></canvas>
         <div id="status">Инициализация...</div>
+        <div id="info">Видео сохраняется в папку Downloads</div>
         <div id="error"></div>
         <div id="controls">
             <button id="startBtn">Начать</button>
@@ -118,6 +135,7 @@
                 this.status = document.getElementById('status');
                 this.startBtn = document.getElementById('startBtn');
                 this.errorDiv = document.getElementById('error');
+                this.infoDiv = document.getElementById('info');
                 
                 this.stream = null;
                 this.mediaRecorder = null;
@@ -157,6 +175,7 @@
                     this.startBtn.textContent = 'Остановить';
                     this.startBtn.disabled = false;
                     this.startBtn.onclick = () => this.stop();
+                    this.infoDiv.style.display = 'block';
                     
                     this.startMotionDetection();
                 } catch (error) {
@@ -277,23 +296,58 @@
                 }
             }
             
-            saveRecording() {
+            async saveRecording() {
                 const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+                const filename = `motion-recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+                
+                // Пробуем Web Share API (лучше работает на Android)
+                if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'video/webm' })] })) {
+                    try {
+                        const file = new File([blob], filename, { type: 'video/webm' });
+                        await navigator.share({
+                            files: [file],
+                            title: 'Motion Recording',
+                            text: 'Видео с обнаружением движения'
+                        });
+                        this.updateStatus('✅ Видео сохранено! Проверьте галерею или Downloads');
+                        setTimeout(() => {
+                            if (!this.isRecording) {
+                                this.updateStatus('Камера активна');
+                            }
+                        }, 4000);
+                        return;
+                    } catch (error) {
+                        if (error.name !== 'AbortError') {
+                            console.log('Share failed, trying download:', error);
+                        } else {
+                            return; // Пользователь отменил
+                        }
+                    }
+                }
+                
+                // Fallback: обычное скачивание
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `motion-recording-${Date.now()}.webm`;
+                a.download = filename;
+                a.style.display = 'none';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
-                URL.revokeObjectURL(url);
                 
-                this.updateStatus('Видео сохранено');
+                // Даем время на скачивание перед освобождением URL
+                setTimeout(() => {
+                    URL.revokeObjectURL(url);
+                }, 100);
+                
+                this.updateStatus('✅ Видео скачано! Проверьте папку Downloads');
+                this.infoDiv.textContent = `Файл: ${filename} - в папке Downloads`;
                 setTimeout(() => {
                     if (!this.isRecording) {
                         this.updateStatus('Камера активна');
+                        this.infoDiv.textContent = 'Видео сохраняется в папку Downloads';
                     }
-                }, 2000);
+                }, 4000);
             }
             
             stop() {
@@ -316,6 +370,7 @@
                 this.updateStatus('Остановлено');
                 this.startBtn.textContent = 'Начать';
                 this.startBtn.onclick = () => this.start();
+                this.infoDiv.style.display = 'none';
             }
             
             updateStatus(text) {
