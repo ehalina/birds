@@ -181,7 +181,17 @@
         function detectMotion() {
             if (!stream || !canvas || !ctx) return false;
             
+            // Если страница в фоне, не проверяем движение (но запись продолжается)
+            if (document.hidden) {
+                return true; // Возвращаем true, чтобы запись продолжалась
+            }
+            
             try {
+                // Проверяем, что видео активно
+                if (videoPreview.readyState < 2) {
+                    return false;
+                }
+                
                 ctx.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
                 const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 
@@ -215,16 +225,25 @@
                 return motionDetected;
             } catch (error) {
                 console.error('Ошибка обнаружения движения:', error);
-                return false;
+                // Если ошибка, но запись идет - продолжаем запись
+                return isRecording;
             }
         }
         
         let motionDetectionInterval = null;
+        let isPageVisible = true;
         
         function startMotionDetection() {
             if (motionDetectionInterval) return;
             
             motionDetectionInterval = setInterval(() => {
+                // Если страница в фоне и идет запись - не проверяем движение, но продолжаем запись
+                if (document.hidden && isRecording) {
+                    // В фоне просто обновляем время последнего движения, чтобы не останавливать запись
+                    lastMotionTime = Date.now();
+                    return;
+                }
+                
                 const hasMotion = detectMotion();
                 
                 if (hasMotion) {
@@ -237,20 +256,20 @@
                         // Сбрасываем таймер отсутствия движения
                         if (motionTimeout) {
                             clearTimeout(motionTimeout);
+                            motionTimeout = null;
                         }
-                        motionTimeout = setTimeout(() => {
-                            if (isRecording) {
-                                stopRecording();
-                                status.textContent = 'Запись остановлена: нет движения 30 сек';
-                            }
-                        }, NO_MOTION_TIMEOUT);
                     }
-                } else if (isRecording) {
-                    // Проверяем таймер отсутствия движения
+                } else if (isRecording && !document.hidden) {
+                    // Проверяем таймер отсутствия движения только если страница видима
                     const timeSinceMotion = Date.now() - lastMotionTime;
-                    if (timeSinceMotion >= NO_MOTION_TIMEOUT && !motionTimeout) {
+                    if (timeSinceMotion >= NO_MOTION_TIMEOUT) {
+                        if (!motionTimeout) {
+                            stopRecording();
+                            status.textContent = 'Запись остановлена: нет движения 30 сек';
+                        }
+                    } else if (!motionTimeout) {
                         motionTimeout = setTimeout(() => {
-                            if (isRecording) {
+                            if (isRecording && !document.hidden) {
                                 stopRecording();
                                 status.textContent = 'Запись остановлена: нет движения 30 сек';
                             }
@@ -313,7 +332,8 @@
                     status.textContent = 'Ошибка записи: ' + event.error.message;
                 };
                 
-                mediaRecorder.start(1000); // собираем данные каждую секунду
+                // Используем timeslice для более частого сбора данных
+                mediaRecorder.start(500); // собираем данные каждые 500мс
                 isRecording = true;
                 
                 startBtn.style.display = 'none';
@@ -321,6 +341,9 @@
                 status.textContent = 'Запись...';
                 status.classList.add('recording');
                 info.textContent = 'Обнаружено движение!';
+                
+                // Убеждаемся, что запись продолжается даже в фоне
+                console.log('Запись начата. MediaRecorder state:', mediaRecorder.state);
                 
             } catch (error) {
                 status.textContent = 'Ошибка начала записи: ' + error.message;
@@ -474,6 +497,81 @@
         videoPreview.addEventListener('loadedmetadata', () => {
             status.textContent = 'Камера готова. Нажмите "Начать"';
         });
+        
+        // Обработка видимости страницы - продолжаем запись в фоне
+        document.addEventListener('visibilitychange', () => {
+            isPageVisible = !document.hidden;
+            
+            if (document.hidden && isRecording) {
+                console.log('Вкладка в фоне, запись продолжается');
+                info.textContent = 'Запись продолжается в фоне...';
+                // В фоне не проверяем движение, но запись продолжается
+                if (motionTimeout) {
+                    clearTimeout(motionTimeout);
+                    motionTimeout = null;
+                }
+                // Убеждаемся, что видео продолжает играть (не приостановлено)
+                if (videoPreview.paused) {
+                    videoPreview.play().catch(e => console.log('Не удалось возобновить видео:', e));
+                }
+            } else if (!document.hidden && isRecording) {
+                console.log('Вкладка активна, возобновляем проверку движения');
+                info.textContent = 'Обнаружено движение!';
+                // Обновляем время последнего движения при возврате
+                lastMotionTime = Date.now();
+                // Возобновляем видео если оно приостановлено
+                if (videoPreview.paused) {
+                    videoPreview.play().catch(e => console.log('Не удалось возобновить видео:', e));
+                }
+            }
+        });
+        
+        // Предотвращаем приостановку видео
+        videoPreview.addEventListener('pause', () => {
+            if (isRecording && !document.hidden) {
+                videoPreview.play().catch(e => console.log('Не удалось возобновить видео:', e));
+            }
+        });
+        
+        // Предотвращаем приостановку страницы при записи
+        if ('wakeLock' in navigator) {
+            let wakeLock = null;
+            
+            async function requestWakeLock() {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Wake Lock активирован');
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Wake Lock освобожден');
+                    });
+                } catch (err) {
+                    console.log('Wake Lock не поддерживается:', err);
+                }
+            }
+            
+            async function releaseWakeLock() {
+                if (wakeLock) {
+                    await wakeLock.release();
+                    wakeLock = null;
+                }
+            }
+            
+            // Активируем wake lock при начале записи
+            const originalStartRecording = startRecording;
+            startRecording = function() {
+                originalStartRecording();
+                if (isRecording) {
+                    requestWakeLock();
+                }
+            };
+            
+            // Освобождаем wake lock при остановке
+            const originalStopRecording = stopRecording;
+            stopRecording = function() {
+                originalStopRecording();
+                releaseWakeLock();
+            };
+        }
     </script>
 </body>
 </html>
