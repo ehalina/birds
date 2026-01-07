@@ -243,16 +243,26 @@
                 }
                 
                 this.mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
+                    if (event.data && event.data.size > 0) {
                         this.recordedChunks.push(event.data);
                     }
                 };
                 
                 this.mediaRecorder.onstop = () => {
-                    this.saveRecording();
+                    if (this.recordedChunks.length > 0) {
+                        this.saveRecording();
+                    } else {
+                        this.showError('Нет записанных данных');
+                    }
                 };
                 
-                this.mediaRecorder.start();
+                this.mediaRecorder.onerror = (event) => {
+                    console.error('MediaRecorder error:', event.error);
+                    this.showError('Ошибка записи: ' + event.error.message);
+                };
+                
+                // Запись данных каждые 1 секунду для надежности
+                this.mediaRecorder.start(1000);
                 this.isRecording = true;
                 this.status.textContent = '🔴 Запись...';
                 this.status.classList.add('recording');
@@ -261,12 +271,16 @@
             stopRecording() {
                 if (!this.isRecording) return;
                 
-                if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-                    this.mediaRecorder.stop();
+                if (this.mediaRecorder) {
+                    if (this.mediaRecorder.state === 'recording') {
+                        this.mediaRecorder.stop();
+                    } else if (this.mediaRecorder.state === 'paused') {
+                        this.mediaRecorder.stop();
+                    }
                 }
                 
                 this.isRecording = false;
-                this.status.textContent = 'Камера активна';
+                this.status.textContent = 'Сохранение...';
                 this.status.classList.remove('recording');
             }
             
@@ -277,23 +291,99 @@
                 }
             }
             
-            saveRecording() {
-                const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `motion-recording-${Date.now()}.webm`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+            async saveRecording() {
+                if (this.recordedChunks.length === 0) {
+                    this.showError('Нет данных для сохранения');
+                    return;
+                }
                 
-                this.updateStatus('Видео сохранено');
-                setTimeout(() => {
-                    if (!this.isRecording) {
-                        this.updateStatus('Камера активна');
+                const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+                const filename = `motion-recording-${Date.now()}.webm`;
+                
+                // Метод 1: Web Share API (лучше всего работает на Android)
+                if (navigator.share && navigator.canShare) {
+                    try {
+                        const file = new File([blob], filename, { type: 'video/webm' });
+                        if (navigator.canShare({ files: [file] })) {
+                            await navigator.share({
+                                files: [file],
+                                title: 'Motion Recording',
+                                text: 'Видео с обнаружением движения'
+                            });
+                            this.updateStatus('✅ Видео сохранено в галерею');
+                            setTimeout(() => {
+                                if (!this.isRecording) {
+                                    this.updateStatus('Камера активна');
+                                }
+                            }, 3000);
+                            return;
+                        }
+                    } catch (error) {
+                        if (error.name === 'AbortError') {
+                            this.updateStatus('Сохранение отменено');
+                            return;
+                        }
+                        console.log('Share failed, trying download:', error);
                     }
-                }, 2000);
+                }
+                
+                // Метод 2: File System Access API (Chrome на Android)
+                if (window.showSaveFilePicker) {
+                    try {
+                        const fileHandle = await window.showSaveFilePicker({
+                            suggestedName: filename,
+                            types: [{
+                                description: 'Video files',
+                                accept: { 'video/webm': ['.webm'] }
+                            }]
+                        });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                        this.updateStatus('✅ Видео сохранено');
+                        setTimeout(() => {
+                            if (!this.isRecording) {
+                                this.updateStatus('Камера активна');
+                            }
+                        }, 3000);
+                        return;
+                    } catch (error) {
+                        if (error.name !== 'AbortError') {
+                            console.log('File System API failed, trying download:', error);
+                        } else {
+                            this.updateStatus('Сохранение отменено');
+                            return;
+                        }
+                    }
+                }
+                
+                // Метод 3: Улучшенное скачивание
+                try {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    
+                    // Принудительный клик с задержкой
+                    setTimeout(() => {
+                        a.click();
+                        setTimeout(() => {
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                        }, 100);
+                    }, 100);
+                    
+                    this.updateStatus('✅ Видео скачано (проверьте Downloads)');
+                    setTimeout(() => {
+                        if (!this.isRecording) {
+                            this.updateStatus('Камера активна');
+                        }
+                    }, 3000);
+                } catch (error) {
+                    this.showError('Ошибка сохранения: ' + error.message);
+                }
             }
             
             stop() {
